@@ -1,200 +1,310 @@
-# Polymarket Arbitrage Bot
+# 🤖 Polymarket Arbitrage Bot
 
-Polymarket **arbitrage bot** for 15-minute Up/Down markets. Automates the **dump-and-hedge** strategy with configurable thresholds, stop-loss hedging, and optional simulation mode. Full credential management, CLOB order execution, and market discovery via Gamma API.
+> Automates the **dump-and-hedge** strategy on Polymarket's 15-minute Up/Down markets (BTC, ETH, SOL, XRP). Runs safely in **simulation mode by default** — no real money at risk until you're ready.
 
 | | |
 |--|--|
-| **Repository** | [github.com/clodesnow/polymarket-arbitrage-trading-bot](https://github.com/clodesnow/polymarket-arbitrage-trading-bot) |
+| **Repository** | [github.com/Pompeiuss/polymarket-arbitrage-trading-bot](https://github.com/Pompeiuss/polymarket-arbitrage-trading-bot) |
 | **Markets** | [polymarket.com](https://polymarket.com) |
 
 [![Node.js](https://img.shields.io/badge/Node.js-16+-green.svg)](https://nodejs.org/)
 [![TypeScript](https://img.shields.io/badge/TypeScript-5+-blue.svg)](https://www.typescriptlang.org/)
 [![License](https://img.shields.io/badge/License-Apache%202.0-yellow.svg)](LICENSE)
-[![GitHub](https://img.shields.io/badge/GitHub-clodesnow%2Fpolymarket--arbitrage--trading--bot-181717?logo=github)](https://github.com/clodesnow/polymarket-arbitrage-trading-bot)
+[![GitHub](https://img.shields.io/badge/GitHub-Pompeiuss%2Fpolymarket--arbitrage--trading--bot-181717?logo=github)](https://github.com/Pompeiuss/polymarket-arbitrage-trading-bot)
 [![Polymarket](https://img.shields.io/badge/Polymarket-polymarket.com-5D3FD3)](https://polymarket.com)
-[![Homepage](https://img.shields.io/badge/Homepage-polymarket.com-6366f1)](https://polymarket.com)
 
+---
 
-![Polymarket Arbitrage Bot](image/1cfc866b-929f-47df-8075-e87b0b157c86.png)
+## 📸 Bot in Action
 
+![Polymarket Arbitrage Bot Terminal](image/1cfc866b-929f-47df-8075-e87b0b157c86.png)
 
-##  Overview
+*The screenshot above shows the bot running live in a terminal. Here's what you're looking at:*
 
-This **Polymarket arbitrage bot** runs a **dump-and-hedge** strategy on Polymarket’s 15m Up/Down markets (e.g. BTC, ETH, SOL, XRP) by:
+- **Top section** — The bot has started up and is scanning active 15-minute Up/Down markets on Polymarket (in this case BTC). It fetches the current market via the Gamma API and locks on to it.
+- **Price feed rows** — Each line shows a real-time snapshot of the Up and Down orderbook: the current best ask price for each side, and how many minutes/seconds remain in the 15-minute period. Prices update every second.
+- **Dump detection** — When one side's ask drops sharply (by the configured threshold), the bot flags it and prepares to execute Leg 1 (the buy-the-dip trade). You can see the bot logging the detected move and the entry price.
+- **Hedge monitoring** — After Leg 1 is filled, the bot watches the combined cost of both sides. When `leg1_price + opposite_ask ≤ 0.95`, it executes Leg 2 (the hedge), locking in profit regardless of which direction the market resolves.
+- **P&L tracking** — At the bottom, the bot logs per-period profit/loss and running totals. In simulation mode, no real orders are placed — all numbers are hypothetical so you can safely test the strategy.
 
-- **Market discovery** – Finds the current 15m market per asset via Gamma API slug
-- **Price monitoring** – Polls CLOB orderbooks for Up/Down bid/ask and time remaining
-- **Dump detection** – In the first N minutes of each period, detects a sharp price drop on one side (Up or Down)
-- **Leg 1** – Buys the dumped side at the dip
-- **Hedge (Leg 2)** – Waits until combined cost (leg1 + opposite ask) is at or below target (e.g. ≤ 0.95), then buys the opposite side to lock in profit
-- **Stop-loss hedge** – If the hedge condition isn’t met within a max wait time, hedges anyway to limit risk
-- **Settlement** – On market close, redeems winning outcome tokens and tracks P&L
-- **Simulation mode** – Run without placing real orders (default); switch to production when ready
-- **Type-safe** – Full TypeScript with strict types and clear config via `.env`
+> 💡 **New to this?** Don't worry. Everything in this README is explained step by step. You don't need to understand all the code to get it running.
 
-Perfect for automating the dump-and-hedge arbitrage on Polymarket 15m markets with controllable risk and optional dry-run.
+---
 
-<!-- Add screenshots/demo images here -->
-<!--
-![Bot Dashboard](docs/images/dashboard.png)
-![Trade Execution](docs/images/trades.png)
--->
+## 🧠 What Does This Bot Actually Do? (Plain English)
 
-##  Key Features
+Polymarket has markets where you bet whether BTC (or ETH, SOL, XRP) will be **Up or Down** in the next 15 minutes. Each outcome token costs between $0 and $1, and the winning side pays out $1.
 
-###  Trading & Strategy
-- **Dump-and-hedge** – Buy the dip on one outcome, then hedge when sum of prices ≤ target
-- **Multi-asset** – Supports BTC, ETH, SOL, XRP 15m markets (configurable via `MARKETS`)
-- **Automatic market discovery** – Resolves current 15m market by slug and period timestamp
-- **Period rollover** – Detects new 15m periods and switches to the new market automatically
-- **Stop-loss hedge** – Time-based fallback hedge if ideal hedge price isn’t reached
+**The key insight:** If you can buy *both* Up and Down for a combined cost of less than $1.00 (say $0.95), you are **guaranteed to profit** — because no matter what happens, one side wins and pays you $1.
 
-###  Risk & Safety
-- **Simulation by default** – No real orders until you set `PRODUCTION=true` or use `npm run prod`
-- **Configurable sizing** – Shares per leg, sum target, move threshold, and watch window
-- **Stop-loss parameters** – Max wait before forced hedge and stop-loss percentage
-- **Position tracking** – Per-period and total P&L; redemption of winning tokens on close
+The bot automates this:
 
-###  Production-Ready
-- **Env-based config** – All settings in `.env` (no config files to commit)
-- **CLOB auth** – API key derivation from signer or optional explicit API key/secret/passphrase
-- **Proxy wallet support** – Optional Polymarket proxy/profile address and signature type (EOA / Proxy / GnosisSafe)
-- **History logging** – Append-only `history.toml` for audit and debugging
-- **Graceful handling** – Continues monitoring on transient API errors; clear stderr logging
+1. It watches for a sudden price **dump** on one side (e.g. the "Up" token drops sharply).
+2. It buys the dumped side cheap (**Leg 1**).
+3. It then waits until the *other* side is also cheap enough that the **combined cost ≤ $0.95**.
+4. It buys the other side (**Leg 2** — the hedge).
+5. At market close, one side pays $1. Since you spent ≤ $0.95 total, you keep the difference as profit.
 
-##  Quick Start
+If the hedge condition is never met (prices don't get cheap enough), the bot has a **stop-loss** that hedges anyway after a max wait time, capping your downside.
 
-### Prerequisites
+---
 
-- **Node.js 16+** – [Download Node.js](https://nodejs.org/)
-- **Polygon wallet** – With USDC for trading (production)
-- **POL/MATIC** – For gas when redeeming winning tokens (production)
+## ✅ Before You Start — What You Need
 
-### Installation
+| Requirement | Why you need it | Where to get it |
+|---|---|---|
+| **Node.js 16+** | Runs the bot | [nodejs.org](https://nodejs.org/) |
+| **Git** | Downloads the code | [git-scm.com](https://git-scm.com/) |
+| **A terminal / command prompt** | To run commands | Built into your OS |
+| **A Polygon wallet** (production only) | Holds USDC for trades | MetaMask, Rabby, etc. |
+| **USDC on Polygon** (production only) | The money you trade with | Buy on any exchange |
+| **A little POL/MATIC** (production only) | Pays gas fees on Polygon | Buy on any exchange |
+
+> 🟢 **For simulation mode (the default), you don't need a wallet, USDC, or any real money.** You can install and run the bot right now just to watch it work.
+
+---
+
+## 🚀 Quick Start (5 Minutes)
+
+### Step 1 — Download the bot
+
+Open your terminal and run:
 
 ```bash
-# Clone this repository
-git clone https://github.com/clodesnow/polymarket-arbitrage-trading-bot.git
+git clone https://github.com/Pompeiuss/polymarket-arbitrage-trading-bot.git
 cd polymarket-arbitrage-trading-bot
+```
 
-# Install dependencies
+> **What this does:** Downloads all the bot's code to a new folder on your computer and moves you into it.
+
+### Step 2 — Install dependencies
+
+```bash
 npm install
+```
 
-# Build the project
+> **What this does:** Installs all the libraries the bot needs to run. This may take a minute. You'll see a lot of text scroll by — that's normal.
+
+### Step 3 — Build the project
+
+```bash
 npm run build
 ```
 
-### Configuration
+> **What this does:** Compiles the TypeScript source code into JavaScript that Node.js can run. You only need to do this once (or again after pulling code updates).
 
-1. **Create environment file:**
+### Step 4 — Set up your configuration file
+
 ```bash
 cp .env.example .env
 ```
 
-2. **Edit `.env` with your settings:**
-```env
-# Required for production (real trades and redemption)
-PRIVATE_KEY=0x...                    # Your wallet private key (hex, with or without 0x)
-PROXY_WALLET_ADDRESS=0x...           # Polymarket proxy/profile address (if using proxy)
-SIGNATURE_TYPE=2                      # 0=EOA, 1=Proxy, 2=GnosisSafe
+> **What this does:** Creates a `.env` file (your personal settings file) from the provided example. Open this file in any text editor to change settings.
 
-# Markets: comma-separated (btc, eth, sol, xrp)
-MARKETS=btc
+### Step 5 — Run in simulation mode
 
-# Strategy (defaults are fine to start)
-DUMP_HEDGE_SHARES=10
-DUMP_HEDGE_SUM_TARGET=0.95
-DUMP_HEDGE_MOVE_THRESHOLD=0.15
-DUMP_HEDGE_WINDOW_MINUTES=2
-DUMP_HEDGE_STOP_LOSS_MAX_WAIT_MINUTES=5
-DUMP_HEDGE_STOP_LOSS_PERCENTAGE=0.2
-
-# Simulation (default) vs production
-PRODUCTION=false
-```
-
-3. **Run the bot:**
 ```bash
-# Simulation (default) – no real orders
 npm start
-# or explicitly
-npm run sim
-
-# Production – real trades (ensure PRIVATE_KEY and optional PROXY_WALLET_ADDRESS are set)
-npm run prod
-
-# Development – run TypeScript with ts-node
-npm run dev
 ```
 
-Logs go to stderr and are appended to `history.toml`.
+That's it! The bot will start monitoring markets and logging what it *would* do — no real money involved.
 
-##  Configuration Guide
+You should see output like the screenshot above: live price feeds, dump detections, and simulated trade logs.
 
-### Environment Variables
+---
 
-| Variable | Description | Default |
-|----------|-------------|---------|
-| **Polymarket API** | | |
-| `GAMMA_API_URL` | Gamma API base URL | `https://gamma-api.polymarket.com` |
-| `CLOB_API_URL` | CLOB API base URL | `https://clob.polymarket.com` |
-| `API_KEY` | CLOB API key (optional; derived from signer if not set) | - |
-| `API_SECRET` | CLOB API secret | - |
-| `API_PASSPHRASE` | CLOB API passphrase | - |
-| **Wallet & auth** | | |
-| `PRIVATE_KEY` | Wallet private key (required for trading/redemption) | - |
-| `PROXY_WALLET_ADDRESS` | Polymarket proxy wallet address | - |
-| `SIGNATURE_TYPE` | `0` EOA, `1` Proxy, `2` GnosisSafe | `2` |
-| **Polling** | | |
-| `CHECK_INTERVAL_MS` | Orderbook poll interval (ms) | `1000` |
-| `MARKET_CLOSURE_CHECK_INTERVAL_SECONDS` | How often to check market closure | `20` |
-| **Markets & strategy** | | |
-| `MARKETS` | Comma-separated: `btc`, `eth`, `sol`, `xrp` | `btc` |
-| `DUMP_HEDGE_SHARES` | Shares per leg | `10` |
-| `DUMP_HEDGE_SUM_TARGET` | Target sum for hedge (e.g. 0.95) | `0.95` |
-| `DUMP_HEDGE_MOVE_THRESHOLD` | Dump detection threshold (e.g. 0.15 = 15%) | `0.15` |
-| `DUMP_HEDGE_WINDOW_MINUTES` | Watch window for dump (minutes) | `2` |
-| `DUMP_HEDGE_STOP_LOSS_MAX_WAIT_MINUTES` | Max wait before stop-loss hedge | `5` |
-| `DUMP_HEDGE_STOP_LOSS_PERCENTAGE` | Stop-loss percentage | `0.2` |
-| **Mode** | | |
-| `PRODUCTION` | `true` = real trades, `false` = simulation | `false` |
+## ⚙️ Configuration Guide
 
-### Optional API overrides
+All settings live in your `.env` file. Open it in a text editor and you'll see:
 
-If you don’t set `API_KEY` / `API_SECRET` / `API_PASSPHRASE`, the bot derives CLOB credentials from the signer (recommended). You can set them explicitly if you already have API keys.
+```env
+# ── Wallet (only needed for real trades) ────────────────────────────
+PRIVATE_KEY=0x...                    # Your wallet private key
+PROXY_WALLET_ADDRESS=0x...           # Your Polymarket proxy address
+SIGNATURE_TYPE=2                     # 2 = GnosisSafe (Polymarket default)
 
-##  How It Works
+# ── Which markets to watch ──────────────────────────────────────────
+MARKETS=btc                          # Options: btc, eth, sol, xrp (or comma-separated)
 
-### Dump-and-hedge flow
+# ── Strategy settings ───────────────────────────────────────────────
+DUMP_HEDGE_SHARES=10                 # How many shares to buy per leg
+DUMP_HEDGE_SUM_TARGET=0.95           # Only hedge when combined cost ≤ this
+DUMP_HEDGE_MOVE_THRESHOLD=0.15       # Dump must be at least 15% drop to trigger
+DUMP_HEDGE_WINDOW_MINUTES=2          # Only watch for dumps in the first 2 min of each period
+DUMP_HEDGE_STOP_LOSS_MAX_WAIT_MINUTES=5   # After 5 min, hedge anyway (stop-loss)
+DUMP_HEDGE_STOP_LOSS_PERCENTAGE=0.2  # Stop-loss cap
 
-1. **Discovery** – For each asset in `MARKETS`, the bot finds the current 15m Up/Down market via Gamma API (slug pattern e.g. `btc-updown-15m-<timestamp>`).
-2. **Monitoring** – Every `CHECK_INTERVAL_MS`, it fetches Up/Down orderbooks, computes best bid/ask, and builds a snapshot (prices + time remaining in the period).
-3. **Watch window** – For the first `DUMP_HEDGE_WINDOW_MINUTES` of each 15m period, it watches for a **dump**: one side’s ask drops by at least `DUMP_HEDGE_MOVE_THRESHOLD` (e.g. 15%) within a short time window.
-4. **Leg 1** – When a dump is detected, it buys `DUMP_HEDGE_SHARES` of that side (Up or Down) at the current ask.
-5. **Hedge condition** – It then waits until `leg1_entry_price + opposite_ask ≤ DUMP_HEDGE_SUM_TARGET` (e.g. ≤ 0.95).
-6. **Leg 2** – When the condition is met, it buys the same number of shares of the opposite outcome (hedge). Combined cost per “share pair” is ≤ target, so resolution pays $1 per share and locks in profit.
-7. **Stop-loss** – If the hedge condition isn’t met within `DUMP_HEDGE_STOP_LOSS_MAX_WAIT_MINUTES`, it executes the hedge anyway at the current price (stop-loss hedge).
-8. **New period** – When the 15m period rolls over, the bot discovers the new market and resets strategy state for the new period.
-9. **Closure** – After market end, it checks resolution, redeems winning outcome tokens (production only), and updates P&L. Closure checks run every `MARKET_CLOSURE_CHECK_INTERVAL_SECONDS`.
+# ── Mode ────────────────────────────────────────────────────────────
+PRODUCTION=false                     # false = simulation, true = real trades
+```
 
-### Simulation vs production
+### Settings explained for beginners
 
-- **Simulation** (`PRODUCTION=false` or `npm run sim`): no orders sent to the CLOB; strategy logic and logging run as normal. Use this to verify behavior and parameters.
-- **Production** (`PRODUCTION=true` or `npm run prod`): real orders and redemptions. Requires `PRIVATE_KEY`; set `PROXY_WALLET_ADDRESS` and `SIGNATURE_TYPE` if you use a proxy/GnosisSafe.
+| Setting | Simple explanation | Recommended starting value |
+|---|---|---|
+| `MARKETS` | Which crypto's 15m market to trade | `btc` |
+| `DUMP_HEDGE_SHARES` | How many tokens to buy per trade leg | `10` (= $10 risk at $1/share) |
+| `DUMP_HEDGE_SUM_TARGET` | Only lock in a trade if you can profit at least 5¢ per share | `0.95` |
+| `DUMP_HEDGE_MOVE_THRESHOLD` | How big the price drop needs to be to trigger the bot | `0.15` (15%) |
+| `DUMP_HEDGE_WINDOW_MINUTES` | Only look for dumps near the start of each 15m period | `2` |
+| `DUMP_HEDGE_STOP_LOSS_MAX_WAIT_MINUTES` | How long to wait for a good hedge before cutting losses | `5` |
+| `PRODUCTION` | The safety switch — keep `false` until you're confident | `false` |
 
-##  Available Scripts
+---
 
-| Command | Description |
-|---------|-------------|
-| `npm run build` | Compile TypeScript to `dist/` |
-| `npm start` | Run compiled bot (simulation by default) |
-| `npm run sim` | Run in simulation mode explicitly |
-| `npm run prod` | Run in production (real trades) |
-| `npm run dev` | Run with ts-node (development) |
+## 🖥️ Running the Bot
 
-##  Docker (optional)
+| Command | What it does |
+|---|---|
+| `npm start` | Run in simulation (safe, no real orders) |
+| `npm run sim` | Same as above, explicit |
+| `npm run prod` | **Real trades** — only use after testing |
+| `npm run dev` | Developer mode (runs TypeScript directly) |
+| `npm run build` | Recompile after code changes |
 
-If you add a `Dockerfile` later:
+> ⚠️ **Always run simulation first.** Watch several full 15-minute periods play out. Make sure the bot behaves as you expect before switching to `PRODUCTION=true`.
+
+---
+
+## 💰 Going Live (Real Trades)
+
+Once you've tested in simulation and are comfortable with how the bot behaves:
+
+### Step 1 — Get your Polymarket proxy wallet address
+
+1. Go to [polymarket.com](https://polymarket.com) and connect your wallet.
+2. Your "proxy wallet" address is shown in your profile. It's different from your main wallet address.
+3. Copy it — you'll need it for `PROXY_WALLET_ADDRESS` in `.env`.
+
+### Step 2 — Export your wallet's private key
+
+> 🔴 **Security warning:** Never share your private key with anyone. Never commit your `.env` file to GitHub. Use a dedicated wallet with only the funds you're willing to risk.
+
+Export your private key from MetaMask: Settings → Security & Privacy → Export Private Key.
+
+### Step 3 — Fund your wallet
+
+Deposit **USDC on the Polygon network** to your Polymarket proxy wallet. Also keep a small amount of **POL** (formerly MATIC) for gas fees when redeeming winnings.
+
+### Step 4 — Update `.env`
+
+```env
+PRIVATE_KEY=0xYOUR_PRIVATE_KEY_HERE
+PROXY_WALLET_ADDRESS=0xYOUR_PROXY_ADDRESS_HERE
+SIGNATURE_TYPE=2
+PRODUCTION=true
+```
+
+### Step 5 — Run
+
+```bash
+npm run prod
+```
+
+---
+
+## 🔍 How It Works — Step by Step
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│                    Every 15-minute period                    │
+│                                                              │
+│  1. DISCOVER  → Find the current BTC/ETH/SOL/XRP market     │
+│                                                              │
+│  2. MONITOR   → Poll Up/Down prices every second            │
+│                                                              │
+│  3. DETECT    → Did one side drop 15%+ in the first 2 min?  │
+│                       │                                      │
+│                      YES                                     │
+│                       ↓                                      │
+│  4. LEG 1     → Buy the dumped side (e.g. "Up" at $0.45)   │
+│                                                              │
+│  5. WAIT      → Watch: leg1_price + opposite_ask ≤ 0.95?    │
+│                       │                                      │
+│              YES ─────┴───── NO (timeout after 5 min)       │
+│               ↓                        ↓                     │
+│  6. LEG 2     → Buy the hedge     STOP-LOSS hedge           │
+│              (guaranteed profit)   (cap the loss)           │
+│                                                              │
+│  7. CLOSE     → Market resolves. Redeem winning tokens.      │
+│                 Log P&L. Start next period.                  │
+└─────────────────────────────────────────────────────────────┘
+```
+
+**Example trade (simulation):**
+
+- Bot detects "Up" token dumps from $0.60 → $0.45 in 90 seconds
+- Leg 1: buys 10 "Up" tokens @ $0.45 = **$4.50 spent**
+- Waits... "Down" token is now $0.48
+- Combined: $0.45 + $0.48 = **$0.93 ≤ $0.95** ✅ Hedge condition met!
+- Leg 2: buys 10 "Down" tokens @ $0.48 = **$4.80 spent**
+- Total cost: $9.30 for 10 share-pairs
+- Market resolves: one side wins → **$10.00 payout**
+- **Profit: $0.70** (7% return in under 15 minutes)
+
+---
+
+## 🐛 Troubleshooting
+
+### "Bot doesn't find any markets"
+- Make sure `MARKETS` is set to one of: `btc`, `eth`, `sol`, `xrp`
+- The bot needs internet access to reach Polymarket's API — check your connection
+- Try the default API URLs (don't change `GAMMA_API_URL` or `CLOB_API_URL` unless you know why)
+
+### "No dumps detected for a long time"
+- This is normal! The strategy only fires when prices move sharply. Quiet markets = no trades.
+- You can try lowering `DUMP_HEDGE_MOVE_THRESHOLD` to `0.10` (10%) to trigger more often, but this increases risk.
+
+### "Orders fail in production"
+- Double-check your `PRIVATE_KEY` — it must start with `0x` and be the correct wallet
+- Make sure you have enough USDC in your Polymarket proxy wallet
+- Confirm `PROXY_WALLET_ADDRESS` is your proxy address (from Polymarket profile), not your main wallet
+
+### "Redemption fails"
+- You need a small amount of POL/MATIC for gas fees on Polygon
+- Redemption only happens after the market is fully resolved — the bot waits for this automatically
+
+### "I see errors about API keys"
+- You don't need to manually set `API_KEY`, `API_SECRET`, or `API_PASSPHRASE`
+- Leave them blank — the bot derives credentials automatically from your `PRIVATE_KEY`
+
+---
+
+## 📁 Project Structure
+
+```
+polymarket-arbitrage-trading-bot/
+├── src/
+│   ├── main.ts           ← Entry point: starts the bot, loads config
+│   ├── config.ts         ← Reads your .env settings into typed variables
+│   ├── api.ts            ← Talks to Polymarket's Gamma + CLOB APIs
+│   ├── monitor.ts        ← Polls orderbooks every second
+│   ├── dumpHedgeTrader.ts← The strategy brain: detects dumps, places trades
+│   ├── models.ts         ← TypeScript type definitions
+│   └── logger.ts         ← Writes to terminal and history.toml
+├── image/                ← Screenshots for this README
+├── .env.example          ← Template for your settings (copy to .env)
+├── .env                  ← YOUR settings (never commit this!)
+├── history.toml          ← Auto-generated trade log
+├── package.json          ← Project metadata and scripts
+└── tsconfig.json         ← TypeScript compiler settings
+```
+
+---
+
+## 🔐 Security Best Practices
+
+- **Never commit `.env`** — it's already in `.gitignore` but double-check before pushing
+- **Use a dedicated wallet** — don't use your main wallet; create one just for this bot
+- **Start small** — set `DUMP_HEDGE_SHARES=1` for your first real trades to minimize risk
+- **Simulate first** — run for several hours in simulation before going live
+- **Rotate keys** — if you ever accidentally expose your private key, move funds immediately and generate a new wallet
+
+---
+
+## 🐳 Docker (Optional)
+
+If you prefer running the bot in a container:
 
 ```bash
 docker build -t polymarket-arbitrage-bot .
@@ -202,80 +312,48 @@ docker run --env-file .env -d --name polymarket-arbitrage-bot polymarket-arbitra
 docker logs -f polymarket-arbitrage-bot
 ```
 
-##  Troubleshooting
+---
 
-### Bot doesn’t find markets
-- Confirm `MARKETS` is one of `btc`, `eth`, `sol`, `xrp` (comma-separated).
-- Check network access to Gamma and CLOB APIs; try default `GAMMA_API_URL` and `CLOB_API_URL` first.
+## 🤝 Contributing
 
-### Orders fail in production
-- Ensure `PRIVATE_KEY` is set and correct (hex, with or without `0x`).
-- If using a proxy, set `PROXY_WALLET_ADDRESS` and `SIGNATURE_TYPE` (usually `2` for GnosisSafe).
-- Verify USDC balance and that the market is still active and accepting orders.
+Contributions are welcome!
 
-### Redemption fails
-- Ensure you have enough POL for gas on Polygon.
-- Confirm the market is closed and resolved; the bot only redeems after resolution.
-
-### No dumps detected
-- Increase `DUMP_HEDGE_MOVE_THRESHOLD` (e.g. 0.10 → 0.15) or extend `DUMP_HEDGE_WINDOW_MINUTES`.
-- Markets may be quiet; the strategy only acts when a sufficient short-term drop occurs.
-
-##  Security Best Practices
-
-- **Never commit `.env`** – Keep it in `.gitignore` (already listed).
-- **Use env vars for secrets** – Don’t hardcode `PRIVATE_KEY` or API credentials.
-- **Test in simulation first** – Run with `PRODUCTION=false` or `npm run sim` before enabling real trades.
-- **Limit wallet use** – Prefer a dedicated wallet with limited funds for the bot.
-- **Rotate keys** – Replace credentials if they may have been exposed.
-
-##  Project structure
-
-- `src/main.ts` – Entry point, config load, market discovery, and monitor/trader wiring.
-- `src/config.ts` – Loads and validates `.env` into typed config.
-- `src/api.ts` – Polymarket Gamma + CLOB API client (markets, orderbook, orders, redemption).
-- `src/monitor.ts` – Fetches orderbook snapshots and drives the strategy callback.
-- `src/dumpHedgeTrader.ts` – Dump detection, leg 1/2, stop-loss hedge, closure and P&L.
-- `src/models.ts` – Shared types (Market, OrderBook, TokenPrice, etc.).
-- `src/logger.ts` – History log and stderr output.
-- `history.toml` – Append-only log (created at runtime; in `.gitignore`).
-
-##  Contributing
-
-Contributions are welcome. Please open an issue or pull request.
-
-1. Fork [clodesnow/polymarket-arbitrage-trading-bot](https://github.com/clodesnow/polymarket-arbitrage-trading-bot)  
-2. Create a feature branch (`git checkout -b feature/AmazingFeature`)  
-3. Commit your changes (`git commit -m 'Add some AmazingFeature'`)  
-4. Push to the branch (`git push origin feature/AmazingFeature`)  
-5. Open a Pull Request  
-
-##  License
-
-This project is licensed under the Apache License 2.0 – see the [LICENSE](LICENSE) file for details.
-
-##  Disclaimer
-
-**IMPORTANT LEGAL DISCLAIMER:**
-
-This software is provided “as-is” for educational and research purposes only. Trading on prediction markets involves substantial risk of loss.
-
-- **No warranty** – The software is provided without any warranties.  
-- **Use at your own risk** – You are solely responsible for any losses incurred.  
-- **Not financial advice** – This is not investment or trading advice.  
-- **Compliance** – Ensure compliance with local laws and regulations.  
-- **Testing** – Always test with simulation and small amounts before production.
-
-The authors and contributors are not responsible for any financial losses, damages, or legal issues arising from the use of this software.
-
-##  Roadmap
-
-- [ ] Optional WebSocket orderbook updates for lower latency  
-- [ ] Backtesting / replay mode for strategy tuning  
-- [ ] Optional Telegram/Discord notifications  
-- [ ] More timeframe support (e.g. 1h)  
-- [ ] PnL export and simple reporting  
+1. Fork [Pompeiuss/polymarket-arbitrage-trading-bot](https://github.com/Pompeiuss/polymarket-arbitrage-trading-bot)
+2. Create a feature branch: `git checkout -b feature/MyFeature`
+3. Commit your changes: `git commit -m 'Add MyFeature'`
+4. Push: `git push origin feature/MyFeature`
+5. Open a Pull Request
 
 ---
 
-**Keywords**: Polymarket bot, Polymarket arbitrage bot, Polymarket trading bot, dump and hedge, 15m Up Down, prediction markets bot, Polygon, trading automation, Polymarket CLOB — [polymarket.com](https://polymarket.com)
+## 🗺️ Roadmap
+
+- [ ] WebSocket orderbook updates for lower latency
+- [ ] Backtesting / replay mode for strategy tuning
+- [ ] Telegram/Discord trade notifications
+- [ ] Support for longer timeframes (e.g. 1h markets)
+- [ ] P&L export and reporting
+
+---
+
+## 📜 License
+
+Apache License 2.0 — see the [LICENSE](LICENSE) file for details.
+
+---
+
+## ⚠️ Disclaimer
+
+**This software is provided for educational and research purposes only.**
+
+- **No warranty** — provided as-is, without any guarantees
+- **Use at your own risk** — you are solely responsible for any losses
+- **Not financial advice** — nothing here is investment or trading advice
+- **Check local laws** — prediction market trading may be restricted in your region
+- **Always test first** — simulate before trading real money
+
+The authors are not responsible for any financial losses arising from use of this software.
+
+---
+
+**Keywords**: Polymarket bot, Polymarket arbitrage bot, Polymarket trading bot, dump and hedge, 15m Up Down, prediction markets, Polygon, CLOB, trading automation — [polymarket.com](https://polymarket.com)
