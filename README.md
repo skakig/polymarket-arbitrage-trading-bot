@@ -17,7 +17,8 @@
 
 ## 📸 Bot in Action
 
-![Polymarket Arbitrage Bot Terminal](image/1cfc866b-929f-47df-8075-e87b0b157c86.png)
+![Polymarket Arbitrage Bot Terminal](  <img width="1457" height="940" alt="pom" src="https://github.com/user-attachments/assets/5e9ecfaf-de18-498f-af8c-e406cc163551" />
+ )
 
 *The screenshot above shows the bot running live in a terminal. Here's what you're looking at:*
 
