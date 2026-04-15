@@ -17,8 +17,9 @@
 
 ## 📸 Bot in Action
 
-![Polymarket Arbitrage Bot Terminal](  <img width="1457" height="940" alt="pom" src="https://github.com/user-attachments/assets/5e9ecfaf-de18-498f-af8c-e406cc163551" />
- )
+<p align="center">
+  <img src="https://github.com/Pompeiuss/polymarket-arbitrage-trading-bot/blob/main/image/pom.png" alt="Polymarket Arbitrage Bot Terminal" width="100%" />
+</p>
 
 *The screenshot above shows the bot running live in a terminal. Here's what you're looking at:*
 
