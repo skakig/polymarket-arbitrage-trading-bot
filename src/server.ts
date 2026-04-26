@@ -345,6 +345,56 @@ app.post("/close-position", (_req, res) => {
   });
 });
 
+app.get("/debug/slugs", async (req, res) => {
+  const symbols = parseSymbols(req.query.symbols);
+  const window = parseWindow(req.query.window);
+  const period = getPeriodSeconds(window);
+  const now = Math.floor(Date.now() / 1000);
+  const rounded = Math.floor(now / period) * period;
+
+  const attempts = [];
+
+  for (const symbol of symbols) {
+    for (let offset = -2; offset <= 8; offset++) {
+      const timestamp = rounded - offset * period;
+      const slug = buildSlug(symbol, window, timestamp);
+
+      if (!slug) continue;
+
+      try {
+        const market = await api.getMarketBySlug(slug);
+        attempts.push({
+          symbol,
+          offset,
+          timestamp,
+          slug,
+          found: true,
+          active: market.active,
+          closed: market.closed,
+          question: market.question,
+          conditionId: market.conditionId,
+        });
+      } catch (error) {
+        attempts.push({
+          symbol,
+          offset,
+          timestamp,
+          slug,
+          found: false,
+          error: error instanceof Error ? error.message : "Unknown error",
+        });
+      }
+    }
+  }
+
+  res.json({
+    source: "polymarket",
+    window,
+    rounded,
+    attempts,
+  });
+});
+
 app.listen(port, () => {
   console.log(`Polymarket arbitrage API listening on http://localhost:${port}`);
 });
