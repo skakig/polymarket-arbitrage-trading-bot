@@ -100,10 +100,21 @@ function inferSymbol(market: GammaMarket, symbols: string[]): string | null {
 }
 
 function isLikelyWindow(market: GammaMarket, window: WindowParam): boolean {
-  const haystack = `${market.question ?? ""} ${market.slug ?? ""}`.toLowerCase();
-  if (window === "15m") return haystack.includes("15m") || haystack.includes("15-min") || haystack.includes("15 minute");
-  if (window === "1h") return haystack.includes("1h") || haystack.includes("hour");
-  return haystack.includes("1d") || haystack.includes("daily") || haystack.includes("day");
+  const text = `${market.question ?? ""} ${market.slug ?? ""}`.toLowerCase();
+
+  if (window === "15m") {
+    return (
+      text.includes("15") ||
+      text.includes("15m") ||
+      text.includes("minute")
+    );
+  }
+
+  if (window === "1h") {
+    return text.includes("hour") || text.includes("1h");
+  }
+
+  return true;
 }
 
 function isUpDownMarket(market: GammaMarket): boolean {
