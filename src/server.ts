@@ -50,6 +50,7 @@ type NormalizedMarket = {
   window: WindowParam;
   upTokenId?: string;
   downTokenId?: string;
+  discoveryMethod?: "slug" | "gamma";
 };
 
 function parseSymbols(input: unknown): string[] {
@@ -79,11 +80,18 @@ function getConditionId(market: GammaMarket): string {
   return String(market.conditionId ?? market.condition_id ?? "");
 }
 
-function getResolveAt(market: GammaMarket): number {
+function getResolveAt(market: GammaMarket, fallbackTimestamp?: number, window?: WindowParam): number {
   const dateValue = market.endDateISO ?? market.endDateIso ?? market.end_date_iso;
-  if (!dateValue) return Date.now();
-  const parsed = Date.parse(dateValue);
-  return Number.isNaN(parsed) ? Date.now() : parsed;
+  if (dateValue) {
+    const parsed = Date.parse(dateValue);
+    if (!Number.isNaN(parsed)) return parsed;
+  }
+
+  if (fallbackTimestamp && window) {
+    return (fallbackTimestamp + getPeriodSeconds(window)) * 1000;
+  }
+
+  return Date.now();
 }
 
 function inferSymbol(market: GammaMarket, symbols: string[]): string | null {
@@ -101,6 +109,18 @@ function isLikelyWindow(market: GammaMarket, window: WindowParam): boolean {
 function isUpDownMarket(market: GammaMarket): boolean {
   const haystack = `${market.question ?? ""} ${market.slug ?? ""}`.toLowerCase();
   return haystack.includes("up") && haystack.includes("down");
+}
+
+function getPeriodSeconds(window: WindowParam): number {
+  if (window === "1h") return 60 * 60;
+  if (window === "1d") return 24 * 60 * 60;
+  return 15 * 60;
+}
+
+function buildSlug(symbol: string, window: WindowParam, timestamp: number): string | null {
+  const lower = symbol.toLowerCase();
+  if (window === "15m") return `${lower}-updown-15m-${timestamp}`;
+  return null;
 }
 
 function parseTokenIds(market: GammaMarket): { upToken?: Token; downToken?: Token; upTokenId?: string; downTokenId?: string } {
@@ -141,7 +161,34 @@ async function fetchGammaMarkets(): Promise<GammaMarket[]> {
   return Array.isArray(data) ? (data as GammaMarket[]) : [];
 }
 
-async function normalizeMarket(market: GammaMarket, symbol: string, window: WindowParam): Promise<NormalizedMarket | null> {
+async function discoverBySlug(symbol: string, window: WindowParam): Promise<{ market: GammaMarket; timestamp: number } | null> {
+  const period = getPeriodSeconds(window);
+  const now = Math.floor(Date.now() / 1000);
+  const rounded = Math.floor(now / period) * period;
+
+  for (let offset = 0; offset <= 6; offset++) {
+    const timestamp = rounded - offset * period;
+    const slug = buildSlug(symbol, window, timestamp);
+    if (!slug) return null;
+
+    try {
+      const market = await api.getMarketBySlug(slug) as GammaMarket;
+      if (market.active && !market.closed) return { market, timestamp };
+    } catch {
+      // Try the next likely period slug.
+    }
+  }
+
+  return null;
+}
+
+async function normalizeMarket(
+  market: GammaMarket,
+  symbol: string,
+  window: WindowParam,
+  discoveryMethod: "slug" | "gamma",
+  fallbackTimestamp?: number
+): Promise<NormalizedMarket | null> {
   const conditionId = getConditionId(market);
   if (!conditionId) return null;
 
@@ -152,7 +199,7 @@ async function normalizeMarket(market: GammaMarket, symbol: string, window: Wind
     id: conditionId,
     symbol,
     question: market.question,
-    resolveAt: getResolveAt(market),
+    resolveAt: getResolveAt(market, fallbackTimestamp, window),
     spotPrice: null,
     strikePrice: null,
     yesAsk: up?.ask ?? null,
@@ -166,7 +213,44 @@ async function normalizeMarket(market: GammaMarket, symbol: string, window: Wind
     window,
     upTokenId,
     downTokenId,
+    discoveryMethod,
   };
+}
+
+async function discoverMarkets(symbols: string[], window: WindowParam): Promise<NormalizedMarket[]> {
+  const markets: NormalizedMarket[] = [];
+  const seen = new Set<string>();
+
+  for (const symbol of symbols) {
+    const slugResult = await discoverBySlug(symbol, window);
+    if (!slugResult) continue;
+
+    const normalized = await normalizeMarket(slugResult.market, symbol, window, "slug", slugResult.timestamp);
+    if (!normalized || seen.has(normalized.conditionId)) continue;
+
+    seen.add(normalized.conditionId);
+    markets.push(normalized);
+  }
+
+  if (markets.length > 0) return markets;
+
+  const gammaMarkets = await fetchGammaMarkets();
+  for (const rawMarket of gammaMarkets) {
+    if (!rawMarket.active || rawMarket.closed) continue;
+    if (!isUpDownMarket(rawMarket)) continue;
+    if (!isLikelyWindow(rawMarket, window)) continue;
+
+    const symbol = inferSymbol(rawMarket, symbols);
+    if (!symbol) continue;
+
+    const normalized = await normalizeMarket(rawMarket, symbol, window, "gamma");
+    if (!normalized || seen.has(normalized.conditionId)) continue;
+
+    seen.add(normalized.conditionId);
+    markets.push(normalized);
+  }
+
+  return markets;
 }
 
 app.get("/health", (_req, res) => {
@@ -190,20 +274,7 @@ app.get("/markets", async (req, res) => {
   try {
     const symbols = parseSymbols(req.query.symbols);
     const window = parseWindow(req.query.window);
-    const gammaMarkets = await fetchGammaMarkets();
-    const markets: NormalizedMarket[] = [];
-
-    for (const rawMarket of gammaMarkets) {
-      if (!rawMarket.active || rawMarket.closed) continue;
-      if (!isUpDownMarket(rawMarket)) continue;
-      if (!isLikelyWindow(rawMarket, window)) continue;
-
-      const symbol = inferSymbol(rawMarket, symbols);
-      if (!symbol) continue;
-
-      const normalized = await normalizeMarket(rawMarket, symbol, window);
-      if (normalized) markets.push(normalized);
-    }
+    const markets = await discoverMarkets(symbols, window);
 
     res.json({
       source: "polymarket",
