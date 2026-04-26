@@ -113,11 +113,20 @@ export class PolymarketApi {
   }
 
   async getBestPrice(tokenId: string): Promise<TokenPrice | null> {
-    const ob = await this.getOrderbook(tokenId);
-    const bestBid = ob.bids?.[0]?.price != null ? Number(ob.bids[0].price) : null;
-    const bestAsk = ob.asks?.[0]?.price != null ? Number(ob.asks[0].price) : null;
-    if (bestAsk == null) return null;
-    return { tokenId, bid: bestBid, ask: bestAsk };
+    const [askResult, bidResult] = await Promise.allSettled([
+      this.getPrice(tokenId, "SELL"),
+      this.getPrice(tokenId, "BUY"),
+    ]);
+
+    const ask = askResult.status === "fulfilled" && Number.isFinite(askResult.value)
+      ? askResult.value
+      : null;
+    const bid = bidResult.status === "fulfilled" && Number.isFinite(bidResult.value)
+      ? bidResult.value
+      : null;
+
+    if (ask == null && bid == null) return null;
+    return { tokenId, bid, ask };
   }
 
   async placeOrder(params: {
